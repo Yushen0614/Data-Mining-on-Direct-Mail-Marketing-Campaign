@@ -1,0 +1,498 @@
+---
+title: "Direct Email Project"
+author: "Group 10"
+date: "2022-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+# Import Libraries
+```{r Imports }
+#Libraries
+library(dplyr)
+
+library(tidyverse)
+
+#Load package for stratified sampling
+library(splitstackshape)
+
+#Balancing Data
+library(ROSE)
+
+#Package for data partitioning
+library(caTools)
+
+#Package for Feature Selection
+library(FSelector)  
+
+#Package for computing Confusion matrix
+library(caret) 
+
+#Package for ROC chart
+library(pROC) 
+
+#Package for gain chart
+library(CustomerScoringMetrics)
+
+#Packages for LDA
+library(MASS)
+
+#Packages for SVM
+library(e1071)
+
+#Packages for Random Forest
+library(randomForest)
+
+#Packages for Decision Tree
+library(tree)
+
+#Import Dataset (with as.Factor)
+df <- read.csv('assignment_data.csv', stringsAsFactors = TRUE)
+```
+
+# Data Understanding
+
+## Data Dictionary
+
+Variables       | Description
+----------------|------------------------------------------------------------------------------------------------------
+Customer_ID     | Customer identification number
+recency         | Months since last purhcase before the marketing campaign
+purchase_segment| Categorisation for the purhase amount in the past year before the marketing campaign (Categories: 1) 0 - 100 : the purchase amount is between 0 and £100, 2) 100 - 200: the purchase amount is between £100 and £200, 3) 200 - 350, 4) 350 - 500, 5) 500 - 750, 6) 750 - 1,000, 7) 1,000+)
+purchase       | Actual purchase in the past year before the marketing campaign
+mens           | whether the customer purchased men's merchandise in the past year before the marketing campaign (1 = purchased, 0 = not)
+womens         | whether the customer purchased women's merchandise in the past year before the marketing campaign (1= purchased, 0 = not)
+zip_area       | categorisation of zip code as Urban, Suburban, or Rural
+new_customer   | whether the customer is new in the past year or s/he is an existing customer (1 = new customer, 0 = existing customer)
+channel        | categorisation of the channels the customer purchased from in the past year. The categories are Phone, Web and Multichannel 
+email_segment  | e-mail campaign the customer received (The categories are: Mens E-mail: The customer received an email marketing campaign for men's products, Womens E-mail: The customer received an email marketing campaign for women's products, No E-mail: The customer did not receive an email)
+age            | age of the customer in years
+dependent.     | whether the customer has a dependent or not (1 = yes; 0 = no)
+account        | whether the customer has an account or not (1 = yes; 0 = no)
+employed       | whether the customer has a permenant job (1 = yes; 0 = no)
+phone          | whether the customer registered his/her phone or not (1 = yes; 0 = no)
+delivery       | categorisation for the delivery address (1 = home; 2 = work; 3 = multiple)
+marriage       | marital status (1=married, 2=single, 0 = others)
+payment_card   | whether the customer registered a credit card for payment in the past year (1 = yes; 0 = no)
+spend          | total amount spent in the following two weeks period
+visit          | 1: the customer visited the shop in the following two weeks period; 0: the customer did not visit the shop in the following two weeks period.
+
+Summarise Data for more information and check data types to ensure appropriateness
+```{r Str Summary}
+#Structure
+str(df)
+
+#Summary
+summary(df)
+```
+
+
+# Data Preparation
+
+Omit redundant variables
+```{r Data Preparation}
+#only customer ID 
+df$Customer_ID <- NULL
+
+#column "account" only have one factor level which is 1, hence we can omit the column
+df$account <- NULL
+
+# Change data types to an appropriate ones.
+variables <- c("visit", "mens", "womens", "new_customer", "dependent", "employed", "phone", "delivery", "marriage", "payment_card")
+
+df[variables] <- lapply(df[variables], factor)
+
+# Check the level of the target variable. The levels are ordered correctly.
+levels(df$visit)
+
+#Only 26 entries of NA (in column "purchase_segment"), which would not affect the whole data set much if we omit it. Hence, omit NA
+df <- na.omit(df)
+
+summary(df)
+
+```
+```{r}
+# Do the visualisation of gender and email_segment and visit
+gen_seg <- df[c('mens', 'womens', 'email_segment', 'visit')]
+gen_seg <- gen_seg %>% mutate(gender=ifelse(mens==1 & womens==0, 'men', ifelse(mens==0 & womens==1, 'women', 'both')))
+( plot1 <- ggplot(gen_seg, aes(x = gender, fill = email_segment)) +
+  geom_bar() +
+  scale_fill_manual("Ads Type", values=c("#84B3D7", "#C7BDC3", "#EFBC49")) + 
+  ggtitle("The Effectiveness of Direct Email Marketing") +
+  facet_wrap(~visit,labeller=labeller(visit=c("0"="Not visit", "1"="Visit")))  + 
+  xlab("Gender-Related Product") + ylab("Number of Customers") +
+  theme_light() +
+  theme(plot.title = element_text(size = 20), axis.title = element_text(size = 15), axis.text = element_text(size = 12), legend.text = element_text(size = 12), legend.title = element_text(size = 11)) )
+#ggsave(plot1, filename = "plot1.png", width = 10, height = 8)
+```
+
+
+```{r}
+# Data visualization
+( plot2 <- ggplot(df, 
+     aes(x = visit, group = recency)) + 
+      geom_bar(aes(y = ..prop.., fill = factor(..x..)), 
+                   stat="count", 
+                   alpha = 0.7) +
+      geom_text(aes(label = scales::percent(..prop..), y = ..prop..),
+                   stat= "count", 
+                  vjust = -.1,
+                size = 2) +
+      labs(y = "Percentage") +
+      facet_grid(~recency) +
+      scale_x_discrete(labels = c('N','Y')) + 
+      scale_fill_manual("Visit" ,values = c("#BCC5C8","orange"), labels=c("No", "Yes")) + 
+      ggtitle("Months Since Last Purhcase Before the Marketing Campaign") + 
+      theme(plot.title = element_text(hjust = 0.5)) + 
+      theme_light() + 
+      theme(plot.title = element_text(size = 20), axis.title = element_text(size = 15), axis.text = element_text(size = 12), legend.text = element_text(size = 12), legend.title = element_text(size = 11)) )
+
+# ggsave(plot2, filename = "plot2.png", width = 12, height = 9)
+```
+
+Split Data
+```{r}
+# set seed
+set.seed(123)
+# partitioning vector
+split = sample.split(df$visit, SplitRatio = 0.80) 
+
+# training set
+trainingdata = subset(df, split == TRUE) 
+
+# test set
+testdata = subset(df, split == FALSE) 
+
+# Find proportion of visit in the data
+prop.table(table(df$visit))
+# Find proportion of visit in the training data
+prop.table(table(trainingdata$visit))
+# Find proportion of visit in the test data
+prop.table(table(testdata$visit))
+```
+
+Balancing Sampling
+```{r}
+#We need to do over- or under-sampling to balance out the data
+
+# Under-sampling
+under_data <- ovun.sample(visit~. , data = trainingdata, method = "under", p=0.5, seed = 1)$data
+# Check proportion
+prop.table(table(under_data$visit))
+#too much data has been omitted, hence information loss
+
+# Over-sampling
+over_data <- ovun.sample(visit~. , data = trainingdata, method = "over", p=0.5, seed = 1)$data
+# Check proportion
+prop.table(table(over_data$visit))
+#Over-sampling is the duplication of the existing entries, hence having large amount of duplicated data would not help the model in predicting better
+
+# Both
+both_data <- ovun.sample(visit~. , data = trainingdata, method = "both", p=0.5, seed = 1)$data
+# Check proportion
+prop.table(table(both_data$visit))
+#This is the combination of reducing the majority side and duplicating entries from minority side. This means our sample would not be too lacking in terms of information and also would not be specific to certain characteristics from too much duplication of same records from the minority side. Moreover, the amount of observation has not been reduced.
+
+# Compare with training set
+prop.table(table(trainingdata$visit))
+table(trainingdata$visit)
+
+# under-sampling dataset
+table(under_data$visit)
+# over-sampling dataset
+table(over_data$visit)
+# both-sampling dataset
+table(both_data$visit)
+
+```
+
+
+Check information gain from each variables and decide if we want to input every columns into our model.
+```{r}
+# Use function information.gain to compute information gain values of the attributes
+attribute_weights <- information.gain(visit~., both_data)
+# Print weights
+print(attribute_weights)
+
+# Save a copy of the weights in a new dataframe
+information_df <- attribute_weights
+
+# Add row names as a column to keep them during ordering
+information_df$attr <- rownames(attribute_weights)
+
+# Sort the weights in descending order of information gain values.
+information_df <- arrange(information_df, -attr_importance)
+print(information_df)
+
+```
+
+Visualise the information gain
+```{r}
+# Plot the weights
+barplot(information_df$attr_importance, names = information_df$attr, las = 2, ylim = c(0, 0.8))
+```
+
+Cut off columns with no information gain
+```{r}
+# Filter features where the information gain is not zero
+filter(attribute_weights, attr_importance > 0)
+
+# Use cutoff.k() to find the most informative 16 attributes (there are 16 variables that have non-zero info gain)
+filtered_attributes <- cutoff.k(attribute_weights, 16)
+
+# Though, the information gain for variable "spend" is high, it would not enhance our prediction as only those who shows "1" in their "visit" would have a value in "spend". Hence, we can omit the variable. (in the next chunk)
+
+# Print filtered attributes
+print(filtered_attributes)
+```
+
+Finalise dataset that is ready for modelling
+```{r}
+# Select a subset of the dataset by using filtered_attributes 
+datamodelling <- both_data[filtered_attributes]
+
+# Add target variable column to the filtered dataset for modelling
+datamodelling$target <- both_data$visit
+
+# Omit "spend"
+datamodelling$spend <- NULL
+
+# Hence, in conclusion, we have 15 variables that would be useful to our classification models
+
+head(datamodelling)
+
+```
+
+# Modelling
+
+## Linear Discriminant Analysis
+```{r LDA}
+# Build an LDA model
+LDA_model <- lda(target~. , data = datamodelling)
+
+# Predict results
+LDA_predict = predict(LDA_model, testdata)
+
+# Use confusionMatrix to print the performance of LDA model
+confusionMatrix(LDA_predict$class, testdata$visit, positive='1', mode = "everything")
+
+```
+
+## SVM
+```{r SVM}
+set.seed(123)
+# Create a sample stratified by visit, set fraction to 0.4
+StrfSampledData <- stratified(df, "visit", 0.4)
+
+# partitioning vector
+split_svm = sample.split(StrfSampledData$visit, SplitRatio = 0.80) 
+
+# training set for svm
+trainingdata_svm = subset(StrfSampledData, split_svm == TRUE) 
+
+# test set for svm
+testdata_svm = subset(StrfSampledData, split_svm == FALSE)
+
+# Both
+both_data_svm <- ovun.sample(visit~., data = trainingdata_svm, method = "both", p=0.5, seed = 1)$data
+
+# Select a subset of the dataset by using filtered_attributes 
+datamodelling_svm <- both_data_svm[filtered_attributes]
+
+# Add target variable column to the filtered dataset for modelling
+datamodelling_svm$target <- both_data_svm$visit
+
+# Omit "spend"
+datamodelling_svm$spend <- NULL
+```
+
+
+```{r }
+# Build a SVM model
+svm_radial <- svm(target ~ ., data =  datamodelling_svm, kernel = "radial", scale = TRUE, probability = TRUE)
+
+# Predict results
+svm_predict = predict(svm_radial, testdata_svm)
+
+# Use confusionMatrix to print the performance of SVM model
+confusionMatrix(svm_predict, testdata_svm$visit, positive='1', mode = "everything")
+
+```
+
+## logistic
+```{r Logistic}
+# Build a logistic regression model
+LogReg <- glm(target~. , data = datamodelling, family = "binomial")
+
+# Predict the class probabilities of the test data
+LogReg_pred <- predict(LogReg, testdata, type="response")
+
+# Predict the class 
+LOGREG_class <- ifelse(LogReg_pred > 0.5, "1", "0") 
+
+# Save the predictions as factor variables
+LOGREG_class <- as.factor(LOGREG_class)
+
+# Create a Confution Matrix
+confusionMatrix(LOGREG_class, testdata$visit, positive='1', mode = "everything")
+
+```
+
+## Decision Tree
+
+```{r Decision Tree}
+# Build a decision tree
+Dtree_model <- tree(target~., data =  datamodelling)
+
+# Check the summary of the tree
+#summary(Dtree_model)
+#print(Dtree_model)
+
+# Predict the Test set results 
+Dtree_pred <- predict(Dtree_model, testdata, type="class")
+
+# Create a Confution Matrix
+confusionMatrix(Dtree_pred, testdata$visit, positive='1', mode = "everything")
+```
+
+```{r}
+# Set the seed 
+set.seed(10)
+
+# Apply cv.tree function to Dtree
+CVresults = cv.tree(Dtree_model, FUN = prune.misclass)
+
+# Let's plot the last 10 values
+tree_size = tail(CVresults$size, 10)
+misclassifiations = tail(CVresults$dev, 10)
+
+plot(tree_size, misclassifiations/nrow(trainingdata), type = "b", xlab = "Tree Size", ylab = "CV Misclassification Rate")
+
+```
+
+```{r}
+# Prune the tree
+Dtree_prune = prune.misclass(Dtree_model, best = 4)
+
+# Check the summary of the pruned tree
+#summary(Dtree_prune)
+
+# Let's use this model for prediction
+predict_tree <- predict(Dtree_prune, testdata, type="class")
+
+# Create a Confution Matrix
+confusionMatrix(predict_tree, testdata$visit, positive='1', mode = "everything")
+
+```
+
+
+## Random Forest
+```{r Random Forest}
+# Set random seed
+set.seed(50)
+
+# Build Random Forest model
+RF_model <- randomForest(target~. , datamodelling)
+
+# Predict the class of the test data
+RF_pred <- predict(RF_model, testdata)
+
+# Create a Confution Matrix
+confusionMatrix(RF_pred, testdata$visit, positive='1', mode = "everything")
+```
+
+# Evaluation
+Comparing each results
+```{r}
+# Obtain class probabilities by using predict()
+RF_prob <- predict(RF_model, testdata, type = "prob") 
+
+Dtree_prob <- predict(Dtree_model, testdata, type = "vector") 
+
+LDA_pred <- predict(LDA_model, testdata, type = "class") 
+
+SVM_pred <- predict(svm_radial, testdata, probability = TRUE)
+
+
+# Use SVMpred to extract probabilities
+SVM_prob <- attr(SVM_pred, "probabilities")  
+
+```
+
+```{r}
+#ROC curve
+# LDA
+ROC_LDA <- roc(testdata$visit, LDA_pred[["posterior"]][,2])
+
+# SVM
+ROC_SVM <- roc(testdata$visit, SVM_prob[,2])
+
+# Logistic Regression
+ROC_LogReg <- roc(testdata$visit, LogReg_pred)
+
+# Decision Tree
+ROC_Dtree <- roc(testdata$visit, Dtree_prob[,2])
+
+# Random Forest
+ROC_RF <- roc(testdata$visit, RF_prob[,2])
+
+# Plot the ROC curve for Linear Discriminant Analysis, Logistic Regression, SVM, Decision Tree and Random Forest
+ggroc(list(LDA=ROC_LDA,SVM = ROC_SVM,LogReg = ROC_LogReg, Dtree=ROC_Dtree, RF = ROC_RF), legacy.axes=TRUE)+ xlab("False Positive Rate") + ylab("True Positive Rate") +
+  scale_colour_manual(values = c("yellow","blue", "pink","green", "red")) + 
+   geom_abline(intercept = 0, slope = 1, color = "darkgrey", linetype = "dashed")  
+
+```
+
+```{r}
+
+#Calculate the area under the curve (AUC) for Linear Discriminant Analysis
+auc(ROC_LDA)
+
+#Calculate the area under the curve (AUC) for SVM 
+auc(ROC_SVM)
+
+#Calculate the area under the curve (AUC) for Logistic Regression 
+auc(ROC_LogReg)
+
+#Calculate the area under the curve (AUC) for Decision Tree 
+auc(ROC_Dtree)
+
+#Calculate the area under the curve (AUC) for Random Forest 
+auc(ROC_RF)
+```
+
+```{r}
+# Obtain cumulative gains table for Logistic Regression / 
+GainTable_LDA <- cumGainsTable(LDA_pred[["posterior"]][,2], testdata$visit, resolution = 1/100)
+
+# Obtain cumulative gains table for SVM second column
+GainTable_SVM <- cumGainsTable(SVM_prob[,2], testdata$visit, resolution = 1/100)
+
+# Obtain cumulative gains table for Logistic Regression / 
+GainTable_LogReg <- cumGainsTable(LogReg_pred, testdata$visit, resolution = 1/100)
+
+# Obtain cumulative gains table for Decision Tree
+GainTable_Dtree <- cumGainsTable(Dtree_prob[,2], testdata$visit, resolution = 1/100)
+
+# Obtain cumulative gains table for Random Forest
+GainTable_RF <- cumGainsTable(RF_prob[,2], testdata$visit, resolution = 1/100)
+```
+
+```{r}
+# Plot the gain chart
+
+plot(GainTable_LDA[,4], col="yellow", type="l",    
+xlab="Percentage of test instances", ylab="Percentage of correct predictions")
+lines(GainTable_SVM[,4], col="blue", type ="l")
+lines(GainTable_LogReg[,4], col="blue", type ="l")
+lines(GainTable_Dtree[,4], col="green", type ="l")
+lines(GainTable_RF[,4], col="red", type ="l")
+grid(NULL, lwd = 1)
+
+legend("bottomright",
+c("LDA","SVM","LogReg","Dtree", "Random Forest"),
+fill=c("yellow","blue", "pink","green", "red"))
+```
